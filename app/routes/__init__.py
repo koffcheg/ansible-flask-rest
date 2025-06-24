@@ -17,7 +17,7 @@ def register_routes(app):
     def run_playbook(playbook_name, client_name):
         playbook_path = os.path.join(current_app.config['ANSIBLE_PLAYBOOK_PATH'], playbook_name)
         cmd = [
-            current_app.config['ANSIBLE_VENV_PATH'],
+            current_app.config['ANSIBLE_BIN'],
             playbook_path,
             "-e", f"client_name={client_name}"
         ]
