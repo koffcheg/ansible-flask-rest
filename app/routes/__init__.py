@@ -63,7 +63,7 @@ def register_routes(app):
         output_dir = os.path.expanduser(
             f"{current_app.config['FACTORY_OUTPUT_DIR']}/{client_name}"
         )
-        archive_path = f"/current_app.config['FACTORY_OUTPUT_DIR']/{client_name}.tar.gz"
+        archive_path = os.path.join(current_app.config['FACTORY_OUTPUT_DIR'], f"{client_name}.tar.gz")
         subprocess.run(["tar", "czf", archive_path, "-C", output_dir, "."], check=True)
 
         return send_file(archive_path, as_attachment=True)
