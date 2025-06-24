@@ -50,7 +50,7 @@ def register_routes(app):
     @require_auth
     def factory_pull():
         client_name = request.json.get('client_name')
-        result = run_playbook('factory_pull.yaml', client_name)
+        result = run_playbook('factory_pull.yaml', client_name=client_name)
 
         if result.returncode != 0:
             return jsonify({
