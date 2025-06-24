@@ -16,7 +16,6 @@ def register_routes(app):
 
     def run_playbook(playbook_name, extra_vars: dict):
         playbook_path = os.path.join(current_app.config['ANSIBLE_PLAYBOOK_PATH'], playbook_name)
-        ansible_cwd = current_app.config['ANSIBLE_CWD']
         # Convert extra_vars dict into proper CLI args string for Ansible
         extra_vars_string = " ".join([
             f"{key}={value if isinstance(value, str) else repr(value)}"
@@ -29,7 +28,7 @@ def register_routes(app):
             "-e", extra_vars_string
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=ansible_cwd)
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=current_app.config['ANSIBLE_CWD'])
         return result
 
     @app.route('/create', methods=['POST'])
