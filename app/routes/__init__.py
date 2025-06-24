@@ -21,7 +21,7 @@ def register_routes(app):
             playbook_path,
             "-e", f"client_name={client_name}"
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd="/home/koffcheg/ansible-hub")
         return result
 
     @app.route('/create', methods=['POST'])
