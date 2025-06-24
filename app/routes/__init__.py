@@ -1,4 +1,4 @@
-from flask import request, jsonify, current_app
+from flask import request, jsonify, current_app, send_file
 from functools import wraps
 import subprocess
 import os
@@ -50,5 +50,20 @@ def register_routes(app):
     @require_auth
     def factory_pull():
         client_name = request.json.get('client_name')
-        result = run_playbook('factory_pull.yaml', client_name=client_name)
-        return jsonify({"stdout": result.stdout, "stderr": result.stderr, "rc": result.returncode})
+        result = run_playbook('factory_pull.yaml', client_name)
+
+        if result.returncode != 0:
+            return jsonify({
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "rc": result.returncode
+            }), 500
+
+        # Archive the folder
+        output_dir = os.path.expanduser(
+            f"{current_app.config['FACTORY_OUTPUT_DIR']}/{client_name}"
+        )
+        archive_path = f"/current_app.config['FACTORY_OUTPUT_DIR']/{client_name}.tar.gz"
+        subprocess.run(["tar", "czf", archive_path, "-C", output_dir, "."], check=True)
+
+        return send_file(archive_path, as_attachment=True)
