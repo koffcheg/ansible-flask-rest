@@ -1,0 +1,42 @@
+# Byte-compiled / optimized / compiled files
+__pycache__/
+*.pyc
+*.pyd
+*.pyo
+*.egg-info/
+.eggs/
+
+# Virtual environment
+# venv/
+# .venv/
+# env/
+# .env/
+
+# Distribution / packaging
+dist/
+build/
+*.egg
+
+# Editors and IDEs
+.vscode/ # VS Code
+.idea/ # PyCharm
+*.sublime-project
+*.sublime-workspace
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+
+# Database files
+*.sqlite3
+
+# Test coverage
+.coverage
+
+# Jupyter Notebook files
+.ipynb_checkpoints/
