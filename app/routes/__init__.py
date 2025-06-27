@@ -1,5 +1,7 @@
 from flask import request, jsonify, current_app, send_file
 from functools import wraps
+import google.auth.transport.requests
+import google.oauth2.id_token
 import subprocess
 import os
 import json
@@ -9,9 +11,24 @@ def register_routes(app):
     def require_auth(f):
         @wraps(f)
         def decorated(*args, **kwargs):
-            token = request.headers.get('Authorization', '').replace('Bearer ', '')
-            if token != current_app.config['API_AUTH_TOKEN']:
-                return jsonify({"error": "Unauthorized"}), 401
+            auth_header = request.headers.get("Authorization", "")
+            if not auth_header.startswith("Bearer "):
+                return jsonify({"error": "Missing or invalid Authorization header"}), 401
+
+            token = auth_header.replace("Bearer ", "")
+            request_adapter = google.auth.transport.requests.Request()
+
+            try:
+                # Verify the token with GCP Identity Platform
+                id_info = google.oauth2.id_token.verify_oauth2_token(token, request_adapter)
+            
+                # Optional: enforce specific audience or email
+                # if id_info['aud'] != YOUR_EXPECTED_AUDIENCE:
+                #     return jsonify({"error": "Invalid audience"}), 403
+
+            except Exception as e:
+                return jsonify({"error": "Invalid token", "details": str(e)}), 401
+
             return f(*args, **kwargs)
         return decorated
 
