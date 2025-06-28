@@ -1,103 +1,78 @@
 
 # Ansible Flask REST API (VPN Automation Hub)
 
-This is a Flask-based REST API for automating VPN client lifecycle operations using Ansible.
+A minimal REST API for managing OpenVPN clients using Ansible playbooks.
+
+---
 
 ## 🔐 Authentication
 
-All routes except `/health` require a valid **Google Identity Token** (JWT) passed in the `Authorization` header:
+All API routes (except `/health`) require a valid **Google Identity Token (JWT)** in the `Authorization` header:
 
 ```
 Authorization: Bearer <your_token>
 ```
 
-Set `API_AUDIENCE` in `.env` to match your Google OAuth client ID.
+Set `API_AUDIENCE` in `.env` to match your Google OAuth Client ID.
 
 ---
 
-## 🔧 Endpoints
+## 🔧 Endpoints Overview
 
 ### ▶️ POST `/create`
-
-Create and upload VPN client configuration.
-
-#### Request
+Creates and uploads VPN client configurations.
 ```json
-{
-  "client_names": ["client1", "client2"]
-}
+{ "client_names": ["client1"] }
 ```
-
-#### Response
-- `stdout`: Ansible stdout log
-- `stderr`: Ansible stderr log
-- `rc`: Return code
-
----
 
 ### 🔁 POST `/update`
-
-Update and reinstall configuration for clients.
-
-#### Request
+Updates existing VPN client configuration.
 ```json
-{
-  "client_names": ["client1"]
-}
+{ "client_names": ["client1"] }
 ```
-
-#### Response
-Same as `/create`.
-
----
 
 ### ❌ POST `/delete`
-
-Delete VPN clients and clean their configuration.
-
-#### Request
+Deletes VPN client config and GCP secrets.
 ```json
-{
-  "client_names": ["client1"]
-}
+{ "client_names": ["client1"] }
 ```
-
-#### Response
-Same as above.
-
----
 
 ### 🏭 POST `/factory_pull`
-
-Trigger client archive generation for factory provisioning.
-
-#### Request
+Generates `.tar.gz` archive for USB provisioning.
 ```json
-{
-  "client_name": "client1"
-}
+{ "client_name": "client1" }
 ```
-
-#### Response
-- A `.tar.gz` archive with the OpenVPN client config.
-
----
 
 ### ❤️ GET `/health`
-
-Returns uptime and status.
-
-#### Response
+Basic health check:
 ```json
-{
-  "status": "ok",
-  "uptime": 123.45
-}
+{ "status": "ok", "uptime": 123.45 }
 ```
 
 ---
 
-## ⚙️ Environment Configuration (`.env`)
+## 📦 Example `curl` Request
+
+```bash
+curl -X POST http://<host>:5000/create \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"client_names": ["client1"]}'
+```
+
+---
+
+## ⚙️ Quick Setup Notes
+
+- Ansible playbooks live in `/home/koffcheg/ansible-hub/playbooks`
+- Systemd `gunicorn` service must:
+  - Set full `PATH` including `gcloud` location
+  - Set `PrivateTmp=false`
+  - NOT set `NoNewPrivileges=true` (or use APT `gcloud`)
+
+---
+
+## 🌱 .env Required Variables
 
 ```env
 API_AUDIENCE=your-google-client-id.apps.googleusercontent.com
@@ -109,25 +84,8 @@ FACTORY_OUTPUT_DIR=/home/koffcheg/factory-output
 
 ---
 
-## 🛡️ Deployment Notes
+## ✅ Status
 
-- Gunicorn is launched via systemd.
-- Only port 5000 should be open internally (use GCP firewall).
-- TLS is not configured here — expected to be used behind dashboard or reverse proxy.
-- Logs and archives are local unless offloaded externally.
-
----
-
-## 📦 Example `curl` Command
-
-```bash
-curl -X POST http://your-server-ip:5000/create \
-  -H "Authorization: Bearer <your_google_jwt>" \
-  -H "Content-Type: application/json" \
-  -d '{"client_names": ["client1"]}'
-```
-
-curl -X POST http://10.142.0.8:5000/create \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"client_names": ["client88"]}'
+✔️ API-ready for VPN automation  
+✔️ Google JWT authenticated  
+✔️ Safe to call via curl or clients
