@@ -21,7 +21,7 @@ def register_routes(app):
     def verify_google_identity_token(token: str, audience: str):
         req = grequests.Request()
         try:
-            claims = jwt.decode(token, audience=audience, certs_request=req)
+            claims = jwt.decode(token, audience=audience, request=req)
             return claims
         except Exception as exc:
             log.error(f"JWT validation failed: {exc}")
