@@ -1,25 +1,30 @@
-import json, os, subprocess, time, logging
+import json
+import os
+import subprocess
+import time
+import logging
 from functools import wraps
 from flask import request, jsonify, current_app, send_file
 from google.auth import jwt
 from google.auth.transport import requests as grequests
 from werkzeug.exceptions import BadRequest
 
-# one global timestamp for /health
+# Global timestamp for health check
 START_TIME = time.time()
 
 def register_routes(app):
-    # ---------- 1. logging ----------
+    # ---------- 1. Setup logger ----------
     log = logging.getLogger("api")
     log.setLevel(logging.INFO)
 
-    # ---------- 2. JWT verification ----------
+    # ---------- 2. Verify Google Identity Token ----------
     def verify_google_identity_token(token: str, audience: str):
         req = grequests.Request()
         try:
-            return jwt.decode(token, req, audience=audience)
+            claims = jwt.decode(token, req, audience=audience)
+            return claims
         except Exception as exc:
-            log.warning("JWT validation failed: %s", exc)
+            log.error(f"JWT validation failed: {exc}")
             return None
 
     def require_auth(fn):
@@ -27,22 +32,27 @@ def register_routes(app):
         def _wrapped(*args, **kwargs):
             raw = request.headers.get("Authorization", "")
             token = raw.removeprefix("Bearer ").strip()
-            if not (claims := verify_google_identity_token(token, app.config["API_AUDIENCE"])):
+            claims = verify_google_identity_token(token, app.config["API_AUDIENCE"])
+            if not claims:
                 return jsonify(error="Unauthorized"), 401
-            request.view_args["claims"] = claims          # pass downstream if needed
+            request.view_args["claims"] = claims
             return fn(*args, **kwargs)
         return _wrapped
 
-    # ---------- 3. Ansible wrapper ----------
+    # ---------- 3. Run Ansible Playbook ----------
     def run_playbook(playbook_name: str, **extra_vars):
-        playbook = os.path.join(app.config["ANSIBLE_PLAYBOOK_PATH"], playbook_name)
-        cmd = [app.config["ANSIBLE_BIN"], playbook, "-e", json.dumps(extra_vars)]
-        res = subprocess.run(cmd, capture_output=True, text=True, cwd=app.config["ANSIBLE_CWD"])
-        log.info("Playbook %s finished rc=%s", playbook_name, res.returncode)
-        return res
+        playbook_path = os.path.join(app.config["ANSIBLE_PLAYBOOK_PATH"], playbook_name)
+        cmd = [
+            app.config["ANSIBLE_BIN"],
+            playbook_path,
+            "-e", json.dumps(extra_vars)
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=app.config["ANSIBLE_CWD"])
+        log.info(f"Executed {playbook_name} with rc={result.returncode}")
+        return result
 
-    # ---------- 4. Helper for all task-like routes ----------
-    def _ansible_endpoint(playbook):
+    # ---------- 4. General Ansible endpoint handler ----------
+    def _ansible_endpoint(playbook: str):
         body = request.get_json(silent=True) or {}
         if "client_names" in body and not isinstance(body["client_names"], list):
             raise BadRequest("client_names must be an array")
@@ -51,7 +61,7 @@ def register_routes(app):
             200 if result.returncode == 0 else 500
         )
 
-    # ---------- 5. End-points ----------
+    # ---------- 5. Routes ----------
     @app.route("/create", methods=["POST"])
     @require_auth
     def create():
@@ -73,17 +83,18 @@ def register_routes(app):
         body = request.get_json(silent=True) or {}
         client_name = body.get("client_name")
         if not client_name:
-            raise BadRequest("client_name required")
-        res = run_playbook("factory_pull.yaml", client_name=client_name)
-        if res.returncode:
-            return jsonify(stdout=res.stdout, stderr=res.stderr, rc=res.returncode), 500
+            raise BadRequest("client_name is required")
 
-        out_dir = os.path.expanduser(f"{app.config['FACTORY_OUTPUT_DIR']}/{client_name}")
-        archive  = f"{out_dir}.tar.gz"
-        subprocess.run(["tar", "czf", archive, "-C", out_dir, "."], check=True)
-        return send_file(archive, as_attachment=True)
+        result = run_playbook("factory_pull.yaml", client_name=client_name)
+        if result.returncode != 0:
+            return jsonify(stdout=result.stdout, stderr=result.stderr, rc=result.returncode), 500
 
-    # ---------- 6. Health ----------
+        output_dir = os.path.expanduser(f"{app.config['FACTORY_OUTPUT_DIR']}/{client_name}")
+        archive_path = f"{output_dir}.tar.gz"
+        subprocess.run(["tar", "czf", archive_path, "-C", output_dir, "."], check=True)
+
+        return send_file(archive_path, as_attachment=True)
+
     @app.route("/health")
     def health():
-        return jsonify(status="ok", uptime=round(time.time() - START_TIME)), 200
+        return jsonify(status="ok", uptime=round(time.time() - START_TIME, 2)), 200
