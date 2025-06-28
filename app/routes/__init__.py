@@ -1,34 +1,28 @@
 from flask import request, jsonify, current_app, send_file
 from functools import wraps
-import google.auth.transport.requests
-import google.oauth2.id_token
+from google.auth import jwt
+from google.auth.transport import requests
 import subprocess
 import os
 import json
 
 def register_routes(app):
 
+    def verify_google_identity_token(token, audience):
+        request_adapter = requests.Request()
+        try:
+            return jwt.decode(token, request_adapter, audience=audience)
+        except Exception as e:
+            current_app.logger.error(f"JWT validation failed: {e}")
+            return None
+
     def require_auth(f):
         @wraps(f)
         def decorated(*args, **kwargs):
-            auth_header = request.headers.get("Authorization", "")
-            if not auth_header.startswith("Bearer "):
-                return jsonify({"error": "Missing or invalid Authorization header"}), 401
-
-            token = auth_header.replace("Bearer ", "")
-            request_adapter = google.auth.transport.requests.Request()
-
-            try:
-                # Verify the token with GCP Identity Platform
-                id_info = google.oauth2.id_token.verify_oauth2_token(token, request_adapter)
-            
-                # Optional: enforce specific audience or email
-                # if id_info['aud'] != YOUR_EXPECTED_AUDIENCE:
-                #     return jsonify({"error": "Invalid audience"}), 403
-
-            except Exception as e:
-                return jsonify({"error": "Invalid token", "details": str(e)}), 401
-
+            token = request.headers.get("Authorization", "").replace("Bearer ", "")
+            claims = verify_google_identity_token(token, current_app.config["API_AUDIENCE"])
+            if not claims:
+                return jsonify({"error": "Unauthorized"}), 401
             return f(*args, **kwargs)
         return decorated
 
