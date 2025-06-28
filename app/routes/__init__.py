@@ -6,7 +6,7 @@ import logging
 from functools import wraps
 from flask import request, jsonify, current_app, send_file
 from google.auth import jwt
-from google.auth.transport import requests as grequests
+from google.auth.transport.requests import Request as GRequest 
 from werkzeug.exceptions import BadRequest
 
 # Global timestamp for health check
@@ -19,9 +19,8 @@ def register_routes(app):
 
     # ---------- 2. Verify Google Identity Token ----------
     def verify_google_identity_token(token: str, audience: str):
-        req = grequests.Request()
         try:
-            claims = jwt.decode(token, audience=audience, request=req)
+            claims = jwt.decode(token, audience=audience, certs_url="https://www.googleapis.com/oauth2/v1/certs",)
             return claims
         except Exception as exc:
             log.error(f"JWT validation failed: {exc}")
