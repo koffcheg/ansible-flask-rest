@@ -1,80 +1,89 @@
-from flask import request, jsonify, current_app, send_file
+import json, os, subprocess, time, logging
 from functools import wraps
+from flask import request, jsonify, current_app, send_file
 from google.auth import jwt
-from google.auth.transport import requests
-import subprocess
-import os
-import json
+from google.auth.transport import requests as grequests
+from werkzeug.exceptions import BadRequest
+
+# one global timestamp for /health
+START_TIME = time.time()
 
 def register_routes(app):
+    # ---------- 1. logging ----------
+    log = logging.getLogger("api")
+    log.setLevel(logging.INFO)
 
-    def verify_google_identity_token(token, audience):
-        request_adapter = requests.Request()
+    # ---------- 2. JWT verification ----------
+    def verify_google_identity_token(token: str, audience: str):
+        req = grequests.Request()
         try:
-            return jwt.decode(token, request_adapter, audience=audience)
-        except Exception as e:
-            current_app.logger.error(f"JWT validation failed: {e}")
+            return jwt.decode(token, req, audience=audience)
+        except Exception as exc:
+            log.warning("JWT validation failed: %s", exc)
             return None
 
-    def require_auth(f):
-        @wraps(f)
-        def decorated(*args, **kwargs):
-            token = request.headers.get("Authorization", "").replace("Bearer ", "")
-            claims = verify_google_identity_token(token, current_app.config["API_AUDIENCE"])
-            if not claims:
-                return jsonify({"error": "Unauthorized"}), 401
-            return f(*args, **kwargs)
-        return decorated
+    def require_auth(fn):
+        @wraps(fn)
+        def _wrapped(*args, **kwargs):
+            raw = request.headers.get("Authorization", "")
+            token = raw.removeprefix("Bearer ").strip()
+            if not (claims := verify_google_identity_token(token, app.config["API_AUDIENCE"])):
+                return jsonify(error="Unauthorized"), 401
+            request.view_args["claims"] = claims          # pass downstream if needed
+            return fn(*args, **kwargs)
+        return _wrapped
 
-    def run_playbook(playbook_name, **extra_vars):
-        playbook_path = os.path.join(current_app.config['ANSIBLE_PLAYBOOK_PATH'], playbook_name)
-        cmd = [
-            current_app.config['ANSIBLE_BIN'],
-            playbook_path,
-            "-e", json.dumps(extra_vars)
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=current_app.config['ANSIBLE_CWD'])
-        return result
+    # ---------- 3. Ansible wrapper ----------
+    def run_playbook(playbook_name: str, **extra_vars):
+        playbook = os.path.join(app.config["ANSIBLE_PLAYBOOK_PATH"], playbook_name)
+        cmd = [app.config["ANSIBLE_BIN"], playbook, "-e", json.dumps(extra_vars)]
+        res = subprocess.run(cmd, capture_output=True, text=True, cwd=app.config["ANSIBLE_CWD"])
+        log.info("Playbook %s finished rc=%s", playbook_name, res.returncode)
+        return res
 
-    @app.route('/create', methods=['POST'])
+    # ---------- 4. Helper for all task-like routes ----------
+    def _ansible_endpoint(playbook):
+        body = request.get_json(silent=True) or {}
+        if "client_names" in body and not isinstance(body["client_names"], list):
+            raise BadRequest("client_names must be an array")
+        result = run_playbook(playbook, **body)
+        return jsonify(stdout=result.stdout, stderr=result.stderr, rc=result.returncode), (
+            200 if result.returncode == 0 else 500
+        )
+
+    # ---------- 5. End-points ----------
+    @app.route("/create", methods=["POST"])
     @require_auth
     def create():
-        client_names = request.json.get('client_names')
-        result = run_playbook('create_and_upload.yaml', client_names=client_names)
-        return jsonify({"stdout": result.stdout, "stderr": result.stderr, "rc": result.returncode})
+        return _ansible_endpoint("create_and_upload.yaml")
 
-    @app.route('/update', methods=['POST'])
+    @app.route("/update", methods=["POST"])
     @require_auth
     def update():
-        client_names = request.json.get('client_names')
-        result = run_playbook('update_and_install.yaml', client_names=client_names)
-        return jsonify({"stdout": result.stdout, "stderr": result.stderr, "rc": result.returncode})
+        return _ansible_endpoint("update_and_install.yaml")
 
-    @app.route('/delete', methods=['POST'])
+    @app.route("/delete", methods=["POST"])
     @require_auth
     def delete():
-        client_names = request.json.get('client_names')
-        result = run_playbook('delete_clients.yaml', client_names=client_names)
-        return jsonify({"stdout": result.stdout, "stderr": result.stderr, "rc": result.returncode})
+        return _ansible_endpoint("delete_clients.yaml")
 
-    @app.route('/factory_pull', methods=['POST'])
+    @app.route("/factory_pull", methods=["POST"])
     @require_auth
     def factory_pull():
-        client_name = request.json.get('client_name')
-        result = run_playbook('factory_pull.yaml', client_name=client_name)
+        body = request.get_json(silent=True) or {}
+        client_name = body.get("client_name")
+        if not client_name:
+            raise BadRequest("client_name required")
+        res = run_playbook("factory_pull.yaml", client_name=client_name)
+        if res.returncode:
+            return jsonify(stdout=res.stdout, stderr=res.stderr, rc=res.returncode), 500
 
-        if result.returncode != 0:
-            return jsonify({
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "rc": result.returncode
-            }), 500
+        out_dir = os.path.expanduser(f"{app.config['FACTORY_OUTPUT_DIR']}/{client_name}")
+        archive  = f"{out_dir}.tar.gz"
+        subprocess.run(["tar", "czf", archive, "-C", out_dir, "."], check=True)
+        return send_file(archive, as_attachment=True)
 
-        # Archive the folder
-        output_dir = os.path.expanduser(
-            f"{current_app.config['FACTORY_OUTPUT_DIR']}/{client_name}"
-        )
-        archive_path = os.path.join(current_app.config['FACTORY_OUTPUT_DIR'], f"{client_name}.tar.gz")
-        subprocess.run(["tar", "czf", archive_path, "-C", output_dir, "."], check=True)
-
-        return send_file(archive_path, as_attachment=True)
+    # ---------- 6. Health ----------
+    @app.route("/health")
+    def health():
+        return jsonify(status="ok", uptime=round(time.time() - START_TIME)), 200
