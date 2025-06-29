@@ -9,23 +9,20 @@ from google.oauth2 import id_token
 from google.auth.transport.requests import Request
 from werkzeug.exceptions import BadRequest
 
-# Global timestamp for health check
 START_TIME = time.time()
 
 def register_routes(app):
     log = logging.getLogger("api")
     log.setLevel(logging.INFO)
 
-    # Load factory token from file or env
+    API_AUDIENCE = app.config.get("API_AUDIENCE")
+
     def get_factory_token():
         try:
             with open("/etc/ansible-hub/factory_token", "r") as f:
                 return f.read().strip()
         except Exception:
             return os.getenv("FACTORY_TOKEN", "")
-
-    FACTORY_TOKEN = get_factory_token()
-    API_AUDIENCE = app.config.get("API_AUDIENCE")
 
     def verify_google_identity_token(token: str):
         try:
@@ -43,12 +40,13 @@ def register_routes(app):
                 return jsonify(error="Missing Bearer token"), 401
 
             token = raw.split(" ", 1)[1].strip()
+            factory_token = get_factory_token()
 
-            # Factory bypass only for /factory_pull
-            if request.path == "/factory_pull" and token == FACTORY_TOKEN:
+            # Allow factory bypass only for /factory_pull
+            if request.path == "/factory_pull" and token == factory_token:
                 return fn(*args, **kwargs)
 
-            # Standard JWT verification
+            # Otherwise, treat as Google Identity token
             claims = verify_google_identity_token(token)
             if not claims:
                 return jsonify(error="Unauthorized"), 401
