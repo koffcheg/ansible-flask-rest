@@ -19,7 +19,7 @@ def register_routes(app):
     # Load factory token from file or env
     def get_factory_token():
         try:
-            with open("/etc/ansible-hub/factory_token", "r") as f:
+            with open("/etc/ansible-hub/factory-token", "r") as f:
                 return f.read().strip()
         except Exception:
             return os.getenv("FACTORY_TOKEN", "")
