@@ -23,7 +23,7 @@ def register_routes(app):
     # ------------------------------------------------------------------ #
     def get_factory_token():
         """Return factory token from file or env *every call*."""
-        token_path = "/etc/ansible-hub/factory_token"
+        token_path = "/home/koffcheg/.ansible-hub/factory_token"
         if os.path.exists(token_path):
             try:
                 with open(token_path, "r") as f:
