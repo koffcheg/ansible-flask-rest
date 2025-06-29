@@ -11,27 +11,37 @@ from werkzeug.exceptions import BadRequest
 
 START_TIME = time.time()
 
+
 def register_routes(app):
     log = logging.getLogger("api")
     log.setLevel(logging.INFO)
 
     API_AUDIENCE = app.config.get("API_AUDIENCE")
 
+    # ------------------------------------------------------------------ #
+    # Helpers                                                            #
+    # ------------------------------------------------------------------ #
     def get_factory_token():
-        try:
-            with open("/etc/ansible-hub/factory_token", "r") as f:
-                return f.read().strip()
-        except Exception:
-            return os.getenv("FACTORY_TOKEN", "")
+        """Return factory token from file or env *every call*."""
+        token_path = "/etc/ansible-hub/factory_token"
+        if os.path.exists(token_path):
+            try:
+                with open(token_path, "r") as f:
+                    return f.read().strip()
+            except Exception as exc:
+                log.error(f"Cannot read factory token file: {exc}")
+        return os.getenv("FACTORY_TOKEN", "").strip()
 
     def verify_google_identity_token(token: str):
         try:
-            claims = id_token.verify_oauth2_token(token, Request(), API_AUDIENCE)
-            return claims
+            return id_token.verify_oauth2_token(token, Request(), API_AUDIENCE)
         except Exception as exc:
             log.error(f"JWT validation failed: {exc}")
             return None
 
+    # ------------------------------------------------------------------ #
+    # Auth decorator                                                     #
+    # ------------------------------------------------------------------ #
     def require_auth(fn):
         @wraps(fn)
         def _wrapped(*args, **kwargs):
@@ -42,11 +52,11 @@ def register_routes(app):
             token = raw.split(" ", 1)[1].strip()
             factory_token = get_factory_token()
 
-            # Allow factory bypass only for /factory_pull
+            # Factory bypass only for /factory_pull
             if request.path == "/factory_pull" and token == factory_token:
                 return fn(*args, **kwargs)
 
-            # Otherwise, treat as Google Identity token
+            # Otherwise treat as Google JWT
             claims = verify_google_identity_token(token)
             if not claims:
                 return jsonify(error="Unauthorized"), 401
@@ -57,28 +67,38 @@ def register_routes(app):
 
         return _wrapped
 
+    # ------------------------------------------------------------------ #
+    # Exec Ansible                                                       #
+    # ------------------------------------------------------------------ #
     def run_playbook(playbook_name: str, **extra_vars):
         playbook_path = os.path.join(app.config["ANSIBLE_PLAYBOOK_PATH"], playbook_name)
         cmd = [
             app.config["ANSIBLE_BIN"],
             playbook_path,
-            "-e", json.dumps(extra_vars),
+            "-e",
+            json.dumps(extra_vars),
         ]
         result = subprocess.run(
             cmd, capture_output=True, text=True, cwd=app.config["ANSIBLE_CWD"]
         )
-        log.info(f"Executed {playbook_name} rc={result.returncode}")
+        log.info("Executed %s rc=%s", playbook_name, result.returncode)
         return result
 
     def _ansible_endpoint(playbook: str):
         body = request.get_json(silent=True) or {}
         if "client_names" in body and not isinstance(body["client_names"], list):
             raise BadRequest("client_names must be an array")
+
         result = run_playbook(playbook, **body)
-        return jsonify(stdout=result.stdout, stderr=result.stderr, rc=result.returncode), (
-            200 if result.returncode == 0 else 500
+        status = 200 if result.returncode == 0 else 500
+        return (
+            jsonify(stdout=result.stdout, stderr=result.stderr, rc=result.returncode),
+            status,
         )
 
+    # ------------------------------------------------------------------ #
+    # Routes                                                             #
+    # ------------------------------------------------------------------ #
     @app.route("/create", methods=["POST"])
     @require_auth
     def create():
@@ -104,9 +124,14 @@ def register_routes(app):
 
         result = run_playbook("factory_pull.yaml", client_name=client_name)
         if result.returncode != 0:
-            return jsonify(stdout=result.stdout, stderr=result.stderr, rc=result.returncode), 500
+            return (
+                jsonify(stdout=result.stdout, stderr=result.stderr, rc=result.returncode),
+                500,
+            )
 
-        output_dir = os.path.expanduser(f"{app.config['FACTORY_OUTPUT_DIR']}/{client_name}")
+        output_dir = os.path.expanduser(
+            f"{app.config['FACTORY_OUTPUT_DIR']}/{client_name}"
+        )
         archive_path = f"{output_dir}.tar.gz"
         subprocess.run(["tar", "czf", archive_path, "-C", output_dir, "."], check=True)
 
