@@ -8,4 +8,5 @@ class Config:
     ANSIBLE_BIN = os.getenv("ANSIBLE_BIN")
     ANSIBLE_CWD= os.getenv('ANSIBLE_CWD')
     FACTORY_OUTPUT_DIR = os.getenv("FACTORY_OUTPUT_DIR")
+    FACTORY_TOKEN = os.getenv("FACTORY_TOKEN")
     API_AUDIENCE = os.getenv("API_AUDIENCE")

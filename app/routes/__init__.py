@@ -4,7 +4,7 @@ import subprocess
 import time
 import logging
 from functools import wraps
-from flask import request, jsonify, current_app, send_file
+from flask import request, jsonify, send_file
 from google.oauth2 import id_token
 from google.auth.transport.requests import Request
 from werkzeug.exceptions import BadRequest
@@ -13,14 +13,23 @@ from werkzeug.exceptions import BadRequest
 START_TIME = time.time()
 
 def register_routes(app):
-    # ---------- 1. Setup logger ----------
     log = logging.getLogger("api")
     log.setLevel(logging.INFO)
 
-    # ---------- 2. Verify Google Identity Token ----------
-    def verify_google_identity_token(token: str, audience: str):
+    # Load factory token from file or env
+    def get_factory_token():
         try:
-            claims = id_token.verify_oauth2_token(token, Request(), audience)
+            with open("/etc/ansible-hub/factory_token", "r") as f:
+                return f.read().strip()
+        except Exception:
+            return os.getenv("FACTORY_TOKEN", "")
+
+    FACTORY_TOKEN = get_factory_token()
+    API_AUDIENCE = app.config.get("API_AUDIENCE")
+
+    def verify_google_identity_token(token: str):
+        try:
+            claims = id_token.verify_oauth2_token(token, Request(), API_AUDIENCE)
             return claims
         except Exception as exc:
             log.error(f"JWT validation failed: {exc}")
@@ -30,27 +39,39 @@ def register_routes(app):
         @wraps(fn)
         def _wrapped(*args, **kwargs):
             raw = request.headers.get("Authorization", "")
-            token = raw.removeprefix("Bearer ").strip()
-            claims = verify_google_identity_token(token, app.config["API_AUDIENCE"])
+            if not raw.startswith("Bearer "):
+                return jsonify(error="Missing Bearer token"), 401
+
+            token = raw.split(" ", 1)[1].strip()
+
+            # Factory bypass only for /factory_pull
+            if request.path == "/factory_pull" and token == FACTORY_TOKEN:
+                return fn(*args, **kwargs)
+
+            # Standard JWT verification
+            claims = verify_google_identity_token(token)
             if not claims:
                 return jsonify(error="Unauthorized"), 401
+
+            request.view_args = request.view_args or {}
             request.view_args["claims"] = claims
             return fn(*args, **kwargs)
+
         return _wrapped
 
-    # ---------- 3. Run Ansible Playbook ----------
     def run_playbook(playbook_name: str, **extra_vars):
         playbook_path = os.path.join(app.config["ANSIBLE_PLAYBOOK_PATH"], playbook_name)
         cmd = [
             app.config["ANSIBLE_BIN"],
             playbook_path,
-            "-e", json.dumps(extra_vars)
+            "-e", json.dumps(extra_vars),
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=app.config["ANSIBLE_CWD"])
-        log.info(f"Executed {playbook_name} with rc={result.returncode}")
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, cwd=app.config["ANSIBLE_CWD"]
+        )
+        log.info(f"Executed {playbook_name} rc={result.returncode}")
         return result
 
-    # ---------- 4. General Ansible endpoint handler ----------
     def _ansible_endpoint(playbook: str):
         body = request.get_json(silent=True) or {}
         if "client_names" in body and not isinstance(body["client_names"], list):
@@ -60,7 +81,6 @@ def register_routes(app):
             200 if result.returncode == 0 else 500
         )
 
-    # ---------- 5. Routes ----------
     @app.route("/create", methods=["POST"])
     @require_auth
     def create():
