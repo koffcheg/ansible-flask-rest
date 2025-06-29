@@ -129,11 +129,13 @@ def register_routes(app):
                 500,
             )
 
-        output_dir = os.path.expanduser(
-            f"{app.config['FACTORY_OUTPUT_DIR']}/{client_name}"
+        archive_path = os.path.expanduser(
+            f"{app.config['FACTORY_OUTPUT_DIR']}/{client_name}.tar.gz"
         )
-        archive_path = f"{output_dir}.tar.gz"
-        subprocess.run(["tar", "czf", archive_path, "-C", output_dir, "."], check=True)
+        
+        if not os.path.exists(archive_path):
+            log.error(f"Expected archive not found: {archive_path}")
+            return jsonify(error="Internal error: archive not found"), 500
 
         return send_file(archive_path, as_attachment=True)
 
